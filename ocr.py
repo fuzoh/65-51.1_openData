@@ -1,3 +1,4 @@
+import itertools
 import requests
 import pdf2image
 import pytesseract
@@ -5,6 +6,9 @@ import nltk
 import hashlib
 from neo4j import GraphDatabase
 import pandas as pd
+from transformers import AutoTokenizer
+from zero_shot_re import RelTaggerModel, RelationExtractor
+
 
 nltk.download("punkt")
 
@@ -112,7 +116,6 @@ MERGE (a)-[:WROTE]->(b)
 """,
     {"title": title, "author": author},
 )
-
 # import the sentences and mentioned entities
 neo4j_query("""
 MATCH (a:Article)
@@ -130,3 +133,40 @@ MERGE (s)-[m:MENTIONS]->(e)
 ON CREATE SET m.count = 1
 ON MATCH SET m.count = m.count + 1
 """, {'data': parsed_entities})
+
+model = RelTaggerModel.from_pretrained("fractalego/fewrel-zero-shot")
+tokenizer = AutoTokenizer.from_pretrained("bert-large-uncased-whole-word-masking-finetuned-squad", use_auth_token='')
+relations = ['associated', 'interacts']
+extractor = RelationExtractor(model, tokenizer, relations)
+
+# Candidate sentence where there is more than a single entity present
+candidates = [s for s in parsed_entities if (s.get('entities')) and (len(s['entities']) > 1)]
+predicted_rels = []
+for c in candidates:
+    combinations = itertools.combinations([{'name':x['entity'], 'id':x['entity_id']} for x in c['entities']], 2)
+    for combination in list(combinations):
+        try:
+            ranked_rels = extractor.rank(text=c['text'].replace(",", " "), head=combination[0]['name'], tail=combination[1]['name'])
+            # Define threshold for the most probable relation
+            if ranked_rels[0][1] > 0.85:
+                predicted_rels.append({'head': combination[0]['id'], 'tail': combination[1]['id'], 'type':ranked_rels[0][0], 'source': c['text_sha256']})
+        except:
+            pass
+
+
+neo4j_query("""
+UNWIND $data as row
+MATCH (source:Entity {id: row.head})
+MATCH (target:Entity {id: row.tail})
+MATCH (text:Sentence {id: row.source})
+MERGE (source)-[:REL]->(r:Relation {type: row.type})-[:REL]-
+>(target)
+MERGE (text)-[:MENTIONS]->(r)
+""", {'data': predicted_rels})
+# examine the extracted relationships
+neo4j_query("""
+MATCH (s:Entity)-[:REL]->(r:Relation)-[:REL]->(t:Entity), (r)<-
+[:MENTIONS]-(st:Sentence)
+RETURN s.name as source_entity, t.name as target_entity, r.type as
+type, st.text as source_text
+""")
