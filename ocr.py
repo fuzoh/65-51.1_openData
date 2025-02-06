@@ -112,3 +112,21 @@ MERGE (a)-[:WROTE]->(b)
 """,
     {"title": title, "author": author},
 )
+
+# import the sentences and mentioned entities
+neo4j_query("""
+MATCH (a:Article)
+UNWIND $data as row
+MERGE (s:Sentence{id:row.text_sha256})
+SET s.text = row.text
+MERGE (a)-[:HAS_SENTENCE]->(s)
+WITH s, row.entities as entities
+UNWIND entities as entity
+MERGE (e:Entity{id:entity.entity_id})
+ON CREATE SET e.other_ids = entity.other_ids,
+e.name = entity.entity,
+e.type = entity.entity_type
+MERGE (s)-[m:MENTIONS]->(e)
+ON CREATE SET m.count = 1
+ON MATCH SET m.count = m.count + 1
+""", {'data': parsed_entities})
