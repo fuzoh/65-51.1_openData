@@ -38,13 +38,15 @@ password = "123456789"
 driver = GraphDatabase.driver(host, auth=(user, password))
 
 
+
 def neo4j_query(query, params=None):
     with driver.session() as session:
         result = session.run(query, params)
         return pd.DataFrame([r.values() for r in result], columns=result.keys())
 
 
-pdf = requests.get("https://arxiv.org/pdf/2110.03526.pdf")
+#pdf = requests.get("https://arxiv.org/pdf/2110.03526.pdf")
+pdf = requests.get("https://link.springer.com/content/pdf/10.1007/s00427-012-0426-4.pdf")
 doc = pdf2image.convert_from_bytes(pdf.content)  # Get the article text
 article = []
 
@@ -52,12 +54,12 @@ for page_number, page_data in enumerate(doc):
     txt = pytesseract.image_to_string(page_data).encode(
         "utf-8"
     )  # Sixth page are only references
-    if page_number < 6:
+    if page_number > 0 and page_number < 7:
         article.append(txt.decode("utf-8"))
 
 article_txt = " ".join(article)
 
-text = article_txt.split("INTRODUCTION")[1]
+text = article_txt.split("Introduction")[1]
 ctext = clean_text(text)
 sentences = nltk.tokenize.sent_tokenize(ctext)
 
@@ -104,7 +106,7 @@ for entities in entity_list:
             "text_sha256": hashlib.sha256(entities["text"].encode("utf-8")).hexdigest(),
         }
     )
-
+print("Trying Api Hugging face")
 
 author = article_txt.split("\n")[0]
 title = " ".join(article_txt.split("\n")[2:4])
@@ -135,7 +137,7 @@ ON MATCH SET m.count = m.count + 1
 """, {'data': parsed_entities})
 
 model = RelTaggerModel.from_pretrained("fractalego/fewrel-zero-shot")
-tokenizer = AutoTokenizer.from_pretrained("bert-large-uncased-whole-word-masking-finetuned-squad", use_auth_token='')
+tokenizer = AutoTokenizer.from_pretrained("bert-large-uncased-whole-word-masking-finetuned-squad", use_auth_token="")
 relations = ['associated', 'interacts']
 extractor = RelationExtractor(model, tokenizer, relations)
 
